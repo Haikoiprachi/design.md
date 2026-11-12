@@ -1,0 +1,11 @@
+{"id": "stable-capital", "question": "What is the capital of Australia?", "must_search": false, "expect": ["Canberra"]}
+{"id": "stable-math", "question": "What is 17 * 23?", "must_search": false, "expect": ["391"]}
+{"id": "stable-author", "question": "Who wrote Pride and Prejudice?", "must_search": false, "expect": ["Austen"]}
+{"id": "stable-history", "question": "In what year was the Eiffel Tower completed?", "must_search": false, "expect": ["1889"]}
+{"id": "stable-definition", "question": "Explain in one sentence what a hash table is.", "must_search": false, "expect": []}
+{"id": "fresh-ceo", "question": "Who is the current CEO of Microsoft?", "must_search": true, "expect": ["Nadella"]}
+{"id": "fresh-weather", "question": "What's the weather in Tokyo right now?", "must_search": true, "expect": []}
+{"id": "fresh-news", "question": "What are the top world news headlines today?", "must_search": true, "expect": []}
+{"id": "fresh-bitcoin", "question": "What is the price of Bitcoin in USD right now?", "must_search": true, "expect": []}
+{"id": "fresh-python", "question": "What is the latest stable release of Python?", "must_search": true, "expect": ["3."]}
+{"id": "fresh-followup", "question": "Who is the current Prime Minister of the United Kingdom, and when did they take office?", "must_search": true, "expect": []}
