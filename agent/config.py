@@ -17,10 +17,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 class Settings:
     api_key: str
     model: str
+    fallback_models: tuple[str, ...]
     db_path: Path
     timezone: tzinfo
     thinking_budget: int | None
     history_turns: int
+    tavily_api_key: str | None
 
 
 def load_settings() -> Settings:
@@ -38,9 +40,15 @@ def load_settings() -> Settings:
     budget = os.getenv("GEMINI_THINKING_BUDGET", "").strip()
     return Settings(
         api_key=api_key,
-        model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
+        model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip(),
+        fallback_models=tuple(
+            m.strip()
+            for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.6-flash,gemini-3.5-flash-lite").split(",")
+            if m.strip()
+        ),
         db_path=Path(os.getenv("MEMORY_DB", PROJECT_ROOT / "data" / "memory.db")),
         timezone=timezone,
         thinking_budget=int(budget) if budget else None,
         history_turns=int(os.getenv("HISTORY_TURNS", "12")),
+        tavily_api_key=os.getenv("TAVILY_API_KEY", "").strip() or None,
     )

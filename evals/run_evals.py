@@ -10,6 +10,7 @@ import argparse
 import json
 import re
 import statistics
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -19,6 +20,7 @@ from agent.config import load_settings
 from agent.llm import GeminiLLM, RateLimitedError
 from agent.memory import MemoryStore
 from agent.orchestrator import ChatAgent, TurnResult
+from agent.search import build_search
 
 EVAL_DIR = Path(__file__).resolve().parent
 
@@ -41,9 +43,16 @@ def main() -> None:
     parser.add_argument("--delay", type=float, default=4.0, help="seconds between calls (free-tier limits)")
     parser.add_argument("--only", choices=["freshness", "memory"])
     args = parser.parse_args()
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")  # Windows consoles default to cp1252
 
     settings = load_settings()
-    llm = GeminiLLM(settings.api_key, settings.model, thinking_budget=settings.thinking_budget)
+    search = build_search(settings.tavily_api_key)
+    llm = GeminiLLM(
+        settings.api_key, settings.model, search,
+        fallback_models=settings.fallback_models, thinking_budget=settings.thinking_budget,
+    )
+    print(f"model={settings.model} search={search.name}")
     results: list[CaseResult] = []
 
     suites = [("freshness", run_freshness_case), ("memory", run_memory_case)]
@@ -115,7 +124,7 @@ def run_memory_case(case: dict, llm: GeminiLLM, tz) -> CaseResult:
 def mentions_date(answer: str, when: datetime) -> bool:
     """Accept any common way of naming the day: ISO date, 'Nov 9', '9 November', or the weekday."""
     text = answer.lower()
-    month_named = when.strftime("%b").lower() in text and re.search(rf"\b{when.day}(?:st|nd|rd|th)?\b", text)
+    month_named = when.strftime("%b").lower() in text and bool(re.search(rf"\b{when.day}(?:st|nd|rd|th)?\b", text))
     return when.strftime("%Y-%m-%d") in text or month_named or when.strftime("%A").lower() in text
 
 

@@ -17,9 +17,9 @@ from .time_ranges import resolve_time_range
 # Questions about the conversation itself ("what did I ask yesterday?").
 _MEMORY_INTENT = re.compile(
     r"\b("
-    r"did i|have i|had i|i (?:asked|said|told|mentioned|wrote|searched)|"
+    r"did i|have i|had i|i (?:ever |just |already )?(?:asked|said|told|mentioned|wrote|searched)|asked you|"
     r"we (?:talked|discussed|spoke|chatted)|"
-    r"(?:my|the) (?:first|last|previous|earlier|prior|latest|recent) (?:questions?|messages?|quer(?:y|ies)|requests?)|"
+    r"(?:my|the) (?:very )?(?:first|last|previous|earlier|prior|latest|recent) (?:questions?|messages?|quer(?:y|ies)|requests?)|"
     r"remember|recall|last time|earlier|so far|history|"
     r"how many (?:questions|messages|times)"
     r")\b",

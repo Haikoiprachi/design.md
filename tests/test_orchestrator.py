@@ -108,6 +108,18 @@ def test_first_question_and_related_memory_across_sessions(memory):
     assert "Possibly related earlier messages:\n- [Sat 2026-11-07 15:30] user: My name is Riya" in llm.calls[1][0]
 
 
+@pytest.mark.parametrize("question", [
+    "What was the very first question I ever asked you?",
+    "What was my first question?",
+    "what's the first thing I asked you",
+])
+def test_first_question_phrasings_pull_first_messages(memory, question):
+    memory.add("s1", "user", "Recommend a sci-fi novel about Mars", created_at=NOW - timedelta(days=9))
+    llm = FakeLLM()
+    run(make_agent(memory, llm), question)
+    assert "The user's first messages ever:" in llm.calls[0][0]
+
+
 def test_first_conversation_says_so(memory):
     llm = FakeLLM()
     run(make_agent(memory, llm), "hi")

@@ -9,6 +9,7 @@ from agent.llm import GeminiLLM, RateLimitedError
 from agent.memory import MemoryStore
 from agent.orchestrator import ChatAgent, TextDelta, TurnResult
 from agent.prompts import format_timestamp, snippet
+from agent.search import build_search
 
 DIM, BOLD, CYAN, RESET = "\033[2m", "\033[1m", "\033[36m", "\033[0m"
 HELP = f"""{DIM}Commands: /new  start a new session (memory is kept)
@@ -22,10 +23,15 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8")
     settings = load_settings()
     memory = MemoryStore(settings.db_path)
-    llm = GeminiLLM(settings.api_key, settings.model, thinking_budget=settings.thinking_budget)
+    search = build_search(settings.tavily_api_key)
+    llm = GeminiLLM(
+        settings.api_key, settings.model, search,
+        fallback_models=settings.fallback_models, thinking_budget=settings.thinking_budget,
+    )
     agent = ChatAgent(memory, llm, tz=settings.timezone, history_turns=settings.history_turns)
 
-    print(f"{BOLD}Gemini chat agent{RESET} {DIM}({settings.model}, memory: {settings.db_path}){RESET}")
+    print(f"{BOLD}Gemini chat agent{RESET} {DIM}({settings.model}, search: {search.name}, "
+          f"memory: {settings.db_path}){RESET}")
     print(HELP)
     while True:
         try:
@@ -77,9 +83,11 @@ def run_turn(agent: ChatAgent, user_text: str) -> None:
 
 def print_footer(result: TurnResult) -> None:
     print()
-    if result.sources:
+    numbered = list(enumerate(result.sources, start=1))
+    cited = [(i, s) for i, s in numbered if f"[{i}]" in result.answer] or numbered[:5]
+    if cited:
         print(f"{DIM}Sources:")
-        for i, source in enumerate(result.sources[:6], start=1):
+        for i, source in cited:
             print(f"  [{i}] {source.title} - {source.uri}")
         print(RESET, end="")
     searched = f"searched: {', '.join(result.search_queries)}" if result.search_queries else "no search"

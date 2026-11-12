@@ -21,19 +21,22 @@ Build the best chat agent possible with **one tool, web search**, that:
             │          their first-ever messages, and their latest messages                                 │
             │        - related past messages (full-text search)                                             │
             │ 2. Save the user turn with a timestamp                                                        │
-            │ 3. Stream Gemini + Google Search grounding (the only tool) ─────► tokens to the user          │
+            │ 3. Stream Gemini; if it calls web_search (the only tool), run the queries in parallel,        │
+            │    send back numbered results, keep streaming ─────► tokens + [n] citations to the user       │
             │ 4. Save the answer and the sources it used                                                    │
             └──────────────────────────────────────────────────────────────────────────────────────────────┘
-                     │                                                 │
-                     ▼                                                 ▼
-        Gemini API (agent/llm.py)                         SQLite + FTS5 (agent/memory.py)
-        google_search grounding, streaming,               messages(id, session_id, role, content,
-        retry on 429/5xx before first token               created_at UTC, sources JSON)
+                     │                          │                              │
+                     ▼                          ▼                              ▼
+        Gemini API (agent/llm.py)     web_search (agent/search.py)     SQLite + FTS5 (agent/memory.py)
+        streaming, function calling,  Tavily (free key) or keyless     messages(id, session_id, role,
+        fail over to the next model   engines raced in parallel,       content, created_at UTC,
+        on 503/504/timeouts           10-minute result cache           sources JSON)
 ```
 
 | Module | Responsibility |
 |---|---|
-| `agent/llm.py` | Gemini wrapper: streaming, Google Search tool, grounding metadata → sources, retries |
+| `agent/llm.py` | Gemini wrapper: streaming, the `web_search` function-calling loop, citation numbering, model failover |
+| `agent/search.py` | The one tool: Tavily or keyless engines raced in parallel, plus a result cache |
 | `agent/memory.py` | Persistent store; recent / time-range / first / full-text queries |
 | `agent/time_ranges.py` | "yesterday", "3 hours ago", "last week", "on Monday", "Nov 3" → exact `[start, end)` |
 | `agent/prompts.py` | System prompt (search policy, accuracy rules, memory rules), timestamp formatting |
@@ -62,14 +65,29 @@ in that range** into the prompt with timestamps. If the range is empty it says s
 - The current date and time are in the system prompt. Without them, LLMs confidently give out-of-date answers.
 - If the model copies the `[timestamp]` prefix into its reply, a small buffer strips it before streaming.
 
-### 4. Gemini with built-in Google Search grounding
-- **Free tier** through Google AI Studio.
-- Search runs **on Google's side inside the same API call**: no second round trip and no separate search API key.
-- Grounding metadata gives the **search queries** and **source URLs**, shown to the user and stored with the answer.
+### 4. Gemini (free tier) with our own `web_search` function
+- **The model is Gemini Flash on the free tier.** The default is `gemini-3.5-flash`, which was the fastest
+  available model in testing.
+- **Why not Gemini's built-in Google Search grounding?** It was the first design, but on the free tier it returned
+  `429 RESOURCE_EXHAUSTED` on every model, while plain generation worked. So search is a normal function tool
+  we run ourselves. It's still one tool, and it brings advantages:
+  - We control the provider, timeouts, caching and parallelism.
+  - Results are **numbered across the whole turn**, so the model's `[n]` citations match the sources list exactly.
+  - Search failures go back to the model as data, so it can say "I couldn't verify this" instead of crashing.
+- **Search providers** (`agent/search.py`):
+  - **Tavily** when `TAVILY_API_KEY` is set (free tier, built for LLM agents, fast and reliable).
+  - Otherwise **keyless public engines** (Yahoo, DuckDuckGo, Bing via `ddgs`), queried **in parallel**, taking the
+    first non-empty result. In testing, single engines failed often (DuckDuckGo 0/4, Bing 2/4, Yahoo 3/4 queries),
+    so racing them gives both better reliability and the latency of the fastest engine.
+  - A 10-minute cache makes repeated or follow-up queries free.
 - **Gemini decides when to search.** The system prompt sets the policy: search for anything that changes
   (news, prices, roles, versions, "latest/today"), and answer stable knowledge and questions about the
-  conversation directly. Skipping unneeded searches is a big latency win. The routing eval measures this.
-- The default model is `gemini-3.8-flash` (fast and free), and it's configurable.
+  conversation directly. The model can issue several searches at once (run in parallel), at most 3 rounds,
+  and the final round disables tools so it always ends with an answer.
+- **Model failover.** Free-tier models are often overloaded (503) or slow (504/timeouts); in testing, 3.8, 3.7
+  and 3.1-lite all timed out while 3.5 Flash answered in about 2 seconds. On an overload before any text has
+  streamed, the agent **switches to the next model in `GEMINI_FALLBACK_MODELS` immediately**, and keeps using
+  whichever model last worked. It only backs off after every model has failed.
 
 ### 5. SQLite + FTS5 instead of a vector database
 - No extra service and no embedding call, so retrieval is local and takes milliseconds.
@@ -83,7 +101,8 @@ in that range** into the prompt with timestamps. If the range is empty it says s
 |---|---|
 | Streaming output | First words appear as soon as they're generated |
 | Search only when needed | Stable questions skip the web entirely |
-| Search inside the model call | No tool-call round trip |
+| Parallel searches + engine racing + cache | Search costs about one fastest-engine round trip, or nothing if cached |
+| Immediate model failover | An overloaded model costs one failed call, not a long wait |
 | Local memory retrieval | Millisecond context building, no extra LLM call |
 | No separate query-rewrite call | The model rewrites follow-ups itself with history in context |
 | `GEMINI_THINKING_BUDGET=0` (optional) | Lower thinking budget for lower latency, where the model supports it |
@@ -98,7 +117,10 @@ in that range** into the prompt with timestamps. If the range is empty it says s
 
 | Failure | Handling |
 |---|---|
-| Free-tier rate limit (429) or 5xx | Exponential backoff with up to 3 retries, only **before** any text has streamed (avoids duplicate output); then a clear message, and the chat continues |
+| Model overloaded (503/504) or timed out | Fail over to the next model immediately; back off only after every model has failed; only **before** any text has streamed (avoids duplicate output) |
+| Free-tier rate limit (429) | Same retry path, then a clear "wait a minute" message, and the chat continues |
+| All search engines fail | The error goes back to the model as the tool result; it answers from its own knowledge and says so |
+| Model ends a turn with no text | Asked once more with tools disabled |
 | Search returns poor or conflicting sources | The prompt tells the model to say so and show sources |
 | Model echoes the timestamp prefix | Stripped by the orchestrator |
 | Vague time ("an hour ago") | Generous window; the model sees exact timestamps and narrows it down |
@@ -107,9 +129,10 @@ in that range** into the prompt with timestamps. If the range is empty it says s
 
 ## Evaluation
 
-`pytest` runs **41 offline tests** with no API key, covering time-phrase parsing, memory storage and retrieval,
-and orchestration with a fake LLM (prompt contents, timestamps, empty-period handling, prefix stripping,
-persistence across sessions).
+`pytest` runs **54 offline tests** with no API key, covering time-phrase parsing, memory storage and retrieval,
+orchestration with a fake LLM (prompt contents, timestamps, empty-period handling, prefix stripping,
+persistence across sessions), the search providers (fallthrough, racing, cache), and the Gemini tool loop with
+a fake client speaking real SDK types (citation numbering, parallel calls, round cap, empty-answer retry, failover).
 
 `python -m evals.run_evals` runs live evals and writes `evals/results.md`:
 - **Freshness** (`evals/freshness.jsonl`): stable and time-sensitive questions. Measures answer accuracy
@@ -119,13 +142,31 @@ persistence across sessions).
   "what did I ask yesterday?", "when did I ask about sourdough?", "what was my first question?", "what's my name?"
   (cross-session), and a no-record case that checks for hallucination.
 
-Results: see [`evals/results.md`](evals/results.md) once generated.
+### Latest results ([`evals/results.md`](evals/results.md), `gemini-3.5-flash`, keyless search)
+
+| Suite | Accuracy | Search routing | Time to first token p50 / p95 |
+|---|---|---|---|
+| Freshness (11) | 11/11 | **11/11** (searched for all 6 fresh, none of the 5 stable) | 6.1s / 21.8s |
+| Memory (6) | **6/6** | never searched (correct) | 1.2s / 2.0s |
+
+Honest reading:
+- **Memory is fast and exact**: around 1.2 seconds, with correct days and times, cross-session recall, and a correct "no, you didn't".
+- **Stable questions** answer in about 1.2 to 2 seconds with no search. The 11.9s outlier was the first call of the
+  run, hitting a cold or overloaded free-tier model.
+- **Searched answers take 4 to 10 seconds, with a long tail.** The cost is two model calls plus keyless search.
+  This is the main thing a Tavily key and a paid tier would improve.
+- **Keyword checks are lenient.** `fresh-news` passed on routing, but the answer said it couldn't fetch live
+  headlines, because snippets from keyless search lacked them. Several fresh cases have no keyword to check
+  (the answers change daily). Next step: an LLM judge with the retrieved sources (see future work).
+- The pre-fix run found a real bug: "the **very** first question I **ever** asked" wasn't recognised as a
+  memory question. It's fixed and covered by a regression test.
 
 ## Tradeoffs and limitations
-- **Free tier**: rate limits apply, and Google may use free-tier prompts to improve its products.
-  A paid key removes both; the code doesn't change.
-- **Less control over searching**: Gemini grounding doesn't allow forcing or blocking a search per query;
-  it is steered by the prompt and checked by the routing eval.
+- **Free tier**: rate limits apply, models get overloaded at busy times (latency varies a lot), and Google may use
+  free-tier prompts to improve its products. A paid key fixes all three; the code doesn't change.
+- **Keyless search is best-effort**: public engines block scrapers unpredictably and return snippets, not pages,
+  so live numbers (weather, prices) are sometimes missing. A free Tavily key is the recommended setup.
+- **Searching takes an extra round trip** compared with built-in grounding, but only on turns that need it.
 - **Single user**: one local database per install, with no auth or multi-user isolation.
 - **Keyword retrieval**: FTS has no semantic matching.
 
@@ -133,5 +174,6 @@ Results: see [`evals/results.md`](evals/results.md) once generated.
 1. Add embeddings (e.g. Gemini embeddings or sqlite-vec) alongside FTS for semantic recall.
 2. Periodically summarize old sessions into a short **user profile** (name, preferences) that's always in context.
 3. Use context caching for the static system prompt to cut latency and cost.
-4. Add a web UI with server-sent events streaming, using the same orchestrator.
-5. Use an LLM judge for open-ended accuracy evals instead of keyword checks.
+4. Fetch and extract the top result page when snippets lack the needed number (weather, prices).
+5. Add a web UI with server-sent events streaming, using the same orchestrator.
+6. Use an LLM judge for open-ended accuracy evals instead of keyword checks.
