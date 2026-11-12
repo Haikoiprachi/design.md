@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gemini Chat Agent</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%234f46e5'/><path d='M10 13h12M10 19h8' stroke='white' stroke-width='3' stroke-linecap='round'/></svg>">
+<style>
+  :root {
+    --bg: #f7f7f8;
+    --panel: #ffffff;
+    --sidebar: #f0f0f3;
+    --text: #1d1d22;
+    --muted: #6b6b76;
+    --border: #e3e3e8;
+    --accent: #4f46e5;
+    --accent-soft: #eceafd;
+    --user-bubble: #4f46e5;
+    --user-text: #ffffff;
+    --code-bg: #f1f1f4;
+    --error: #b42318;
+    --error-soft: #fef0ef;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141417;
+      --panel: #1c1c21;
+      --sidebar: #18181c;
+      --text: #ececf1;
+      --muted: #9a9aa6;
+      --border: #2c2c33;
+      --accent: #8b85ff;
+      --accent-soft: #26244a;
+      --user-bubble: #5b54e8;
+      --user-text: #ffffff;
+      --code-bg: #26262d;
+      --error: #ff8a80;
+      --error-soft: #3a1d1b;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    display: flex; overflow: hidden;
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  a { color: var(--accent); }
+
+  /* ---- sidebar ---- */
+  .sidebar {
+    width: 290px; flex-shrink: 0; background: var(--sidebar);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; height: 100%;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 18px 16px 12px; font-weight: 650; }
+  .brand-dot { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; color: #fff; font-size: 13px; }
+  .new-chat {
+    margin: 4px 12px 12px; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--panel); text-align: left;
+    display: flex; align-items: center; gap: 8px; box-shadow: var(--shadow);
+  }
+  .new-chat:hover { border-color: var(--accent); }
+  .history-title { padding: 6px 16px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .history { flex: 1; overflow-y: auto; padding: 0 8px 16px; }
+  .day { padding: 12px 8px 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .q {
+    display: block; width: 100%; text-align: left; border: 0; background: none;
+    padding: 7px 8px; border-radius: 8px; line-height: 1.35;
+  }
+  .q:hover { background: var(--border); }
+  .q.active { background: var(--accent-soft); }
+  .q-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13.5px; }
+  .q-time { font-size: 11.5px; color: var(--muted); }
+  .history-empty { padding: 8px 16px; color: var(--muted); font-size: 13px; }
+
+  /* ---- main ---- */
+  .main { flex: 1; display: flex; flex-direction: column; height: 100%; min-width: 0; }
+  .topbar { display: none; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .icon-btn { border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 6px 10px; }
+  .scroll { flex: 1; overflow-y: auto; }
+  .thread { max-width: 780px; margin: 0 auto; padding: 28px 20px 12px; }
+
+  .welcome { text-align: center; padding: 10vh 0 20px; }
+  .welcome h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -.01em; }
+  .welcome p { color: var(--muted); margin: 0 0 24px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .chip { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 8px 14px; font-size: 14px; box-shadow: var(--shadow); }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+
+  .msg { margin: 0 0 22px; display: flex; flex-direction: column; }
+  .msg.user { align-items: flex-end; }
+  .bubble { max-width: 85%; border-radius: 16px; padding: 10px 14px; overflow-wrap: anywhere; }
+  .msg.user .bubble { background: var(--user-bubble); color: var(--user-text); border-bottom-right-radius: 4px; white-space: pre-wrap; }
+  .msg.model .bubble { background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; box-shadow: var(--shadow); max-width: 100%; }
+  .stamp { font-size: 11.5px; color: var(--muted); margin-top: 4px; padding: 0 4px; }
+
+  .bubble p { margin: 0 0 .7em; } .bubble p:last-child { margin-bottom: 0; }
+  .bubble ul, .bubble ol { margin: .2em 0 .7em; padding-left: 1.4em; }
+  .bubble h3, .bubble h4 { margin: .6em 0 .3em; font-size: 1.02em; }
+  .bubble code { background: var(--code-bg); border-radius: 5px; padding: 1px 5px; font: 13px ui-monospace, SFMono-Regular, Consolas, monospace; }
+  .bubble pre { background: var(--code-bg); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+  .bubble pre code { background: none; padding: 0; }
+  .cite {
+    display: inline-block; min-width: 1.35em; padding: 0 .3em; margin: 0 1px;
+    font-size: .72em; line-height: 1.5; text-align: center; vertical-align: super;
+    border-radius: 6px; background: var(--accent-soft); color: var(--accent); text-decoration: none; font-weight: 600;
+  }
+  a.cite:hover { background: var(--accent); color: #fff; }
+
+  .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .dots span { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); margin-right: 3px; animation: blink 1.2s infinite both; }
+  .dots span:nth-child(2) { animation-delay: .2s; } .dots span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+
+  .sources { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-width: 100%; }
+  .source { display: flex; gap: 8px; align-items: baseline; font-size: 13px; text-decoration: none; color: var(--text); padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); min-width: 0; }
+  .source:hover { border-color: var(--accent); }
+  .source .n { color: var(--accent); font-weight: 600; flex-shrink: 0; }
+  .source .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .source .d { color: var(--muted); flex-shrink: 0; margin-left: auto; padding-left: 8px; }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 6px; padding: 0 4px; }
+  .error .bubble { background: var(--error-soft); border-color: var(--error); color: var(--error); }
+
+  /* ---- composer ---- */
+  .composer-wrap { padding: 8px 20px 18px; }
+  .composer {
+    max-width: 780px; margin: 0 auto; display: flex; align-items: flex-end; gap: 8px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 8px 8px 8px 14px; box-shadow: var(--shadow);
+  }
+  .composer:focus-within { border-color: var(--accent); }
+  textarea {
+    flex: 1; resize: none; border: 0; outline: none; background: transparent; color: var(--text);
+    font: inherit; max-height: 200px; padding: 6px 0; line-height: 1.5;
+  }
+  .send { border: 0; background: var(--accent); color: #fff; border-radius: 10px; width: 38px; height: 38px; display: grid; place-items: center; flex-shrink: 0; }
+  .send:disabled { opacity: .4; cursor: default; }
+  .hint { max-width: 780px; margin: 6px auto 0; font-size: 12px; color: var(--muted); text-align: center; }
+
+  /* ---- mobile ---- */
+  .scrim { display: none; }
+  @media (max-width: 800px) {
+    .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; transform: translateX(-100%); transition: transform .2s ease; box-shadow: var(--shadow); }
+    body.nav-open .sidebar { transform: none; }
+    body.nav-open .scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 10; }
+    .topbar { display: flex; }
+    .thread { padding: 18px 16px 8px; }
+    .composer-wrap { padding: 6px 16px 14px; }
+    .bubble { max-width: 92%; }
+    .welcome { padding-top: 6vh; }
+  }
+</style>
+</head>
+<body>
+  <aside class="sidebar" aria-label="Conversation history">
+    <div class="brand"><div class="brand-dot">G</div>Gemini Chat Agent</div>
+    <button class="new-chat" id="newChat" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      New chat
+    </button>
+    <div class="history-title">Your questions</div>
+    <nav class="history" id="history"></nav>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main">
+    <div class="topbar">
+      <button class="icon-btn" id="menu" type="button" aria-label="Show history">☰</button>
+      <strong>Gemini Chat Agent</strong>
+    </div>
+    <div class="scroll" id="scroll">
+      <div class="thread" id="thread"></div>
+    </div>
+    <div class="composer-wrap">
+      <form class="composer" id="form">
+        <textarea id="input" rows="1" placeholder="Ask anything…" aria-label="Message" autofocus></textarea>
+        <button class="send" id="send" type="submit" aria-label="Send" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </form>
+      <div class="hint">Searches the web when it needs fresh facts · remembers what you asked and when</div>
+    </div>
+  </main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const thread = $("thread"), scroll = $("scroll"), input = $("input"), send = $("send"), historyEl = $("history");
+  const SUGGESTIONS = [
+    "Who is the current CEO of Microsoft?",
+    "What's the weather in Tokyo right now?",
+    "What is 17 × 23?",
+    "What did I ask you yesterday?",
+  ];
+
+  let sessionId = storage("get", "sessionId");
+  let busy = false;
+
+  // ---------- storage (may be unavailable in private windows) ----------
+  function storage(op, key, value) {
+    try {
+      if (op === "get") return localStorage.getItem(key);
+      if (op === "set") localStorage.setItem(key, value);
+      if (op === "del") localStorage.removeItem(key);
+    } catch (_) { /* fine: the page works without it */ }
+    return null;
+  }
+
+  // ---------- formatting ----------
+  const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const domain = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return ""; } };
+  const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  function dayLabel(date) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const day = new Date(date); day.setHours(0, 0, 0, 0);
+    const diff = Math.round((today - day) / 86400000);
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Yesterday";
+    if (diff < 7) return day.toLocaleDateString([], { weekday: "long" });
+    return day.toLocaleDateString([], { month: "short", day: "numeric", year: day.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+  }
+  const stampOf = (iso) => `${dayLabel(new Date(iso))}, ${timeOf(iso)}`;
+
+  function citation(n, sources) {
+    const src = sources && sources[n - 1];
+    return src
+      ? `<a class="cite" href="${esc(src.uri)}" target="_blank" rel="noopener noreferrer" title="${esc(src.title)}">${n}</a>`
+      : `<span class="cite">${n}</span>`;
+  }
+
+  function inline(text, sources) {
+    let s = esc(text);
+    const codes = [];
+    s = s.replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, "$1<em>$2</em>");
+    s = s.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (_, nums) => nums.split(/\s*,\s*/).map((n) => citation(+n, sources)).join(""));
+    return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
+  }
+
+  // A small, safe Markdown subset: paragraphs, headings, lists, code blocks, bold/italic/code/links, [n] citations.
+  function markdown(text, sources) {
+    const out = [];
+    const blocks = text.split(/```/);
+    blocks.forEach((block, i) => {
+      if (i % 2 === 1) { out.push(`<pre><code>${esc(block.replace(/^[\w-]*\n/, ""))}</code></pre>`); return; }
+      let list = null, para = [];
+      const flushPara = () => { if (para.length) { out.push(`<p>${inline(para.join("\n"), sources).replace(/\n/g, "<br>")}</p>`); para = []; } };
+      const flushList = () => { if (list) { out.push(`<${list.tag}>${list.items.map((it) => `<li>${inline(it, sources)}</li>`).join("")}</${list.tag}>`); list = null; } };
+      for (const line of block.split("\n")) {
+        const bullet = line.match(/^\s*[-*•]\s+(.*)/), numbered = line.match(/^\s*\d+[.)]\s+(.*)/), heading = line.match(/^#{1,4}\s+(.*)/);
+        if (bullet || numbered) {
+          flushPara();
+          const tag = bullet ? "ul" : "ol";
+          if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
+          list.items.push((bullet || numbered)[1]);
+        } else if (heading) {
+          flushPara(); flushList(); out.push(`<h4>${inline(heading[1], sources)}</h4>`);
+        } else if (!line.trim()) {
+          flushPara(); flushList();
+        } else {
+          flushList(); para.push(line);
+        }
+      }
+      flushPara(); flushList();
+    });
+    return out.join("");
+  }
+
+  // ---------- rendering ----------
+  function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+  const atBottom = () => scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+  const toBottom = () => { scroll.scrollTop = scroll.scrollHeight; };
+
+  function showWelcome() {
+    thread.innerHTML = "";
+    const w = el("div", "welcome");
+    w.append(el("h1", null, "What do you want to know?"), el("p", null, "Fresh answers from the web, with sources. Ask me what you asked before, and when."));
+    const chips = el("div", "chips");
+    SUGGESTIONS.forEach((s) => { const c = el("button", "chip"); c.type = "button"; c.textContent = s; c.onclick = () => submit(s); chips.append(c); });
+    w.append(chips);
+    thread.append(w);
+  }
+
+  function addUser(text, iso) {
+    thread.querySelector(".welcome")?.remove();
+    const m = el("div", "msg user");
+    const b = el("div", "bubble"); b.textContent = text;
+    m.append(b, el("div", "stamp", esc(stampOf(iso || new Date().toISOString()))));
+    thread.append(m);
+    return m;
+  }
+
+  function addModel() {
+    const m = el("div", "msg model");
+    const b = el("div", "bubble", `<div class="status"><span class="dots"><span></span><span></span><span></span></span><span class="label">Thinking…</span></div>`);
+    m.append(b);
+    thread.append(m);
+    return { m, b };
+  }
+
+  function citedSources(answer, sources) {
+    const numbered = (sources || []).map((s, i) => ({ ...s, n: i + 1 }));
+    const cited = numbered.filter((s) => new RegExp(`\\[(?:\\d+\\s*,\\s*)*${s.n}(?:\\s*,\\s*\\d+)*\\]`).test(answer));
+    return cited.length ? cited : numbered.slice(0, 5);
+  }
+
+  function finishModel(view, answer, sources, metaText) {
+    view.b.innerHTML = markdown(answer || "(no answer)", sources);
+    const shown = citedSources(answer || "", sources);
+    if (shown.length) {
+      const list = el("div", "sources");
+      shown.forEach((s) => {
+        const a = el("a", "source");
+        a.href = s.uri; a.target = "_blank"; a.rel = "noopener noreferrer"; a.title = s.uri;
+        a.innerHTML = `<span class="n">[${s.n}]</span><span class="t">${esc(s.title)}</span><span class="d">${esc(domain(s.uri))}</span>`;
+        list.append(a);
+      });
+      view.m.append(list);
+    }
+    if (metaText) view.m.append(el("div", "meta", esc(metaText)));
+  }
+
+  function renderHistory(questions) {
+    historyEl.innerHTML = "";
+    if (!questions.length) { historyEl.append(el("div", "history-empty", "No questions yet.")); return; }
+    let lastDay = null;
+    for (const q of questions) {
+      const day = dayLabel(new Date(q.created_at));
+      if (day !== lastDay) { historyEl.append(el("div", "day", esc(day))); lastDay = day; }
+      const b = el("button", "q" + (q.session_id === sessionId ? " active" : ""));
+      b.type = "button";
+      b.innerHTML = `<div class="q-text">${esc(q.content)}</div><div class="q-time">${esc(timeOf(q.created_at))}</div>`;
+      b.onclick = () => { openSession(q.session_id, q.id); document.body.classList.remove("nav-open"); };
+      historyEl.append(b);
+    }
+  }
+
+  // ---------- data ----------
+  async function loadHistory() {
+    try {
+      const res = await fetch("/api/history?limit=200");
+      if (res.ok) renderHistory((await res.json()).questions);
+    } catch (_) { /* sidebar is optional */ }
+  }
+
+  async function openSession(id, focusMessageId) {
+    if (busy) return;
+    const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`).catch(() => null);
+    if (!res || !res.ok) { if (id === sessionId) newChat(); return; }
+    const { messages } = await res.json();
+    sessionId = id; storage("set", "sessionId", id);
+    thread.innerHTML = "";
+    let target = null;
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        const node = addUser(msg.content, msg.created_at);
+        if (msg.id === focusMessageId) target = node;
+      } else {
+        const view = addModel();
+        finishModel(view, msg.content, msg.sources, stampOf(msg.created_at));
+      }
+    }
+    if (!messages.length) showWelcome();
+    target ? target.scrollIntoView({ block: "center" }) : toBottom();
+    loadHistory();
+  }
+
+  function newChat() {
+    if (busy) return;
+    sessionId = null; storage("del", "sessionId");
+    showWelcome(); loadHistory(); input.focus();
+    document.body.classList.remove("nav-open");
+  }
+
+  async function submit(text) {
+    text = (text ?? input.value).trim();
+    if (!text || busy) return;
+    busy = true; send.disabled = true;
+    input.value = ""; autosize();
+
+    addUser(text);
+    const view = addModel();
+    toBottom();
+
+    let raw = "", sources = [], frame = 0, failed = false, attempted = [];
+    const label = () => view.b.querySelector(".label");
+    const paint = () => { frame = 0; const stick = atBottom(); view.b.innerHTML = markdown(raw, sources); if (stick) toBottom(); };
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, session_id: sessionId }),
+      });
+      if (!res.ok || !res.body) throw new Error(res.status === 422 ? "That message is too long." : `Server error (${res.status}).`);
+
+      const reader = res.body.getReader(), decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut;
+        while ((cut = buffer.indexOf("\n\n")) >= 0) {
+          const chunk = buffer.slice(0, cut); buffer = buffer.slice(cut + 2);
+          let event = "message", data = "";
+          for (const line of chunk.split("\n")) {
+            if (line.startsWith("event: ")) event = line.slice(7);
+            else if (line.startsWith("data: ")) data += line.slice(6);
+          }
+          const payload = data ? JSON.parse(data) : {};
+          if (event === "session") {
+            sessionId = payload.session_id; storage("set", "sessionId", sessionId);
+          } else if (event === "search") {
+            attempted.push(...payload.queries);
+            if (!raw && label()) label().textContent = `Searching the web: ${payload.queries.map((q) => `“${q}”`).join(", ")}`;
+          } else if (event === "delta") {
+            raw += payload.text;
+            if (!frame) frame = requestAnimationFrame(paint);
+          } else if (event === "done") {
+            if (frame) cancelAnimationFrame(frame);
+            sources = payload.sources || [];
+            const parts = [
+              payload.queries.length ? `Searched ${payload.queries.map((q) => `“${q}”`).join(", ")}`
+                : attempted.length ? "⚠ Web search returned nothing, so this answer is unverified"
+                : "No search needed",
+              payload.ttft_s != null ? `first words ${payload.ttft_s.toFixed(1)}s` : null,
+              `total ${payload.total_s.toFixed(1)}s`,
+              payload.model || null,
+            ].filter(Boolean);
+            finishModel(view, payload.answer, sources, parts.join(" · "));
+          } else if (event === "error") {
+            failed = true;
+            view.m.classList.add("error");
+            view.b.textContent = payload.message;
+          }
+        }
+      }
+    } catch (err) {
+      failed = true;
+      view.m.classList.add("error");
+      view.b.textContent = `Couldn't reach the agent: ${err.message}`;
+    } finally {
+      busy = false; send.disabled = !input.value.trim();
+      if (!failed) toBottom();
+      loadHistory();
+      input.focus();
+    }
+  }
+
+  // ---------- composer ----------
+  function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 200) + "px"; }
+  input.addEventListener("input", () => { autosize(); send.disabled = busy || !input.value.trim(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+  });
+  $("form").addEventListener("submit", (e) => { e.preventDefault(); submit(); });
+  $("newChat").onclick = newChat;
+  $("menu").onclick = () => document.body.classList.add("nav-open");
+  $("scrim").onclick = () => document.body.classList.remove("nav-open");
+
+  // ---------- start ----------
+  const linked = new URLSearchParams(location.search).get("session");  // /?session=<id> opens that chat
+  if (linked || sessionId) openSession(linked || sessionId); else { showWelcome(); loadHistory(); }
+})();
+</script>
+</body>
+</html>

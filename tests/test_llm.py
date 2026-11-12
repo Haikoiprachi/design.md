@@ -3,7 +3,7 @@
 import pytest
 from google.genai import errors, types
 
-from agent.llm import ChatTurn, GeminiLLM, Grounding, RateLimitedError, TextChunk
+from agent.llm import ChatTurn, GeminiLLM, Grounding, RateLimitedError, SearchStarted, TextChunk
 from agent.search import SearchError, SearchResult
 
 
@@ -90,7 +90,7 @@ def test_search_round_trip_numbers_sources_and_dedupes_urls():
 
     events = run(llm)
 
-    assert events[:-1] == [TextChunk("Satya Nadella [1][2].")]
+    assert events[:-1] == [SearchStarted(("ceo microsoft", "ms ceo since")), TextChunk("Satya Nadella [1][2].")]
     grounding = events[-1]
     assert isinstance(grounding, Grounding)
     assert [s.uri for s in grounding.sources] == ["https://w", "https://ms"]
@@ -108,7 +108,7 @@ def test_search_failure_is_reported_to_the_model_not_raised():
     script = [[chunk(search_call("x"))], [chunk(text("I couldn't verify that."))]]
     llm, client = make_llm(script, FakeSearch(fail=True))
     events = run(llm)
-    assert events[0] == TextChunk("I couldn't verify that.")
+    assert events == [SearchStarted(("x",)), TextChunk("I couldn't verify that.")]
     payload = client.models.requests[1]["contents"][-1].parts[0].function_response.response
     assert "all engines down" in payload["error"]
 
@@ -124,7 +124,7 @@ def test_search_rounds_are_capped_and_last_round_disables_tools():
 def test_empty_answer_is_retried_once_without_tools():
     script = [[chunk(search_call("q"))], [chunk(text(""))], [chunk(text("Answer."))]]
     llm, client = make_llm(script)
-    assert run(llm)[0] == TextChunk("Answer.")
+    assert run(llm)[:2] == [SearchStarted(("q",)), TextChunk("Answer.")]
     modes = [r["config"].tool_config.function_calling_config.mode for r in client.models.requests]
     assert modes == ["AUTO", "AUTO", "NONE"]
 

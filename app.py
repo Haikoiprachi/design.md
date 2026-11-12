@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 
 from agent.config import load_settings
-from agent.llm import GeminiLLM, RateLimitedError
+from agent.llm import GeminiLLM, RateLimitedError, SearchStarted
 from agent.memory import MemoryStore
 from agent.orchestrator import ChatAgent, TextDelta, TurnResult
 from agent.prompts import format_timestamp, snippet
@@ -73,6 +73,8 @@ def run_turn(agent: ChatAgent, user_text: str) -> None:
         for event in agent.chat(user_text):
             if isinstance(event, TextDelta):
                 print(event.text, end="", flush=True)
+            elif isinstance(event, SearchStarted):
+                print(f"{DIM}(searching: {', '.join(event.queries)}){RESET} ", end="", flush=True)
             elif isinstance(event, TurnResult):
                 print_footer(event)
     except RateLimitedError as exc:

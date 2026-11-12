@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, tzinfo
 from typing import Callable, Iterator
 
-from .llm import LLM, ChatTurn, Grounding, Source, TextChunk
+from .llm import LLM, ChatTurn, Grounding, SearchStarted, Source, TextChunk
 from .memory import MemoryStore, Message
 from .prompts import build_system_prompt, format_timestamp, snippet, strip_timestamp_prefix
 from .time_ranges import resolve_time_range
@@ -49,7 +49,7 @@ class TurnResult:
         return bool(self.search_queries or self.sources)
 
 
-AgentEvent = TextDelta | TurnResult
+AgentEvent = TextDelta | SearchStarted | TurnResult
 
 
 class ChatAgent:
@@ -89,6 +89,9 @@ class ChatAgent:
         for event in self.llm.stream(system, history):
             if isinstance(event, Grounding):
                 grounding = event
+                continue
+            if isinstance(event, SearchStarted):
+                yield event
                 continue
             if not parts and len(pending) < _PREFIX_BUFFER_CHARS:
                 pending += event.text

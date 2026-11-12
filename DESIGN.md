@@ -41,6 +41,7 @@ Build the best chat agent possible with **one tool, web search**, that:
 | `agent/time_ranges.py` | "yesterday", "3 hours ago", "last week", "on Monday", "Nov 3" → exact `[start, end)` |
 | `agent/prompts.py` | System prompt (search policy, accuracy rules, memory rules), timestamp formatting |
 | `agent/orchestrator.py` | Builds context, runs a turn, records it, measures latency |
+| `web.py` + `static/index.html` | Web UI: FastAPI server streaming Server-Sent Events to a single dependency-free page |
 | `app.py` | Terminal UI |
 
 ## Key decisions
@@ -107,7 +108,18 @@ in that range** into the prompt with timestamps. If the range is empty it says s
 | No separate query-rewrite call | The model rewrites follow-ups itself with history in context |
 | `GEMINI_THINKING_BUDGET=0` (optional) | Lower thinking budget for lower latency, where the model supports it |
 
-### 7. Correctness choices
+### 7. Web UI
+- `web.py` is a thin FastAPI layer over the same `ChatAgent`; nothing about the agent changes for the web.
+- `POST /api/chat` streams **Server-Sent Events**: `session` (its id), `search` (queries, shown live as
+  "Searching the web: …"), `delta` (text), `done` (answer, sources, queries, latency, which model answered), or `error`.
+- The server is stateless per request: the browser keeps the `session_id`, and the conversation itself lives in SQLite.
+  `GET /api/history` feeds the sidebar (every question, grouped by day with times, which makes "remembers what you
+  asked and when" visible); `GET /api/sessions/{id}` reopens any past conversation so you can continue it.
+- `static/index.html` is one file with no build step and no external requests. It renders a safe subset of
+  Markdown itself (HTML is escaped first), turns `[n]` into links to source n, and lists only cited sources.
+- The SQLite connection is shared across the server's worker threads behind a lock.
+
+### 8. Correctness choices
 - The system prompt requires search-backed claims for anything time-sensitive, a preference for primary sources,
   "as of <date>" phrasing, and admitting uncertainty instead of guessing.
 - Sources are always shown, so the user can check them.
@@ -162,8 +174,10 @@ Honest reading:
   memory question. It's fixed and covered by a regression test.
 
 ## Tradeoffs and limitations
-- **Free tier**: rate limits apply, models get overloaded at busy times (latency varies a lot), and Google may use
-  free-tier prompts to improve its products. A paid key fixes all three; the code doesn't change.
+- **Free tier**: the quota is tiny (measured: **20 requests per model per day**, and one searched answer uses 2 or 3
+  requests), models get overloaded at busy times (latency varies a lot), and Google may use free-tier prompts to
+  improve its products. Failover across 4 Flash models stretches the daily budget; a paid key removes all of these
+  limits with no code change.
 - **Keyless search is best-effort**: public engines block scrapers unpredictably and return snippets, not pages,
   so live numbers (weather, prices) are sometimes missing. A free Tavily key is the recommended setup.
 - **Searching takes an extra round trip** compared with built-in grounding, but only on turns that need it.
@@ -175,5 +189,5 @@ Honest reading:
 2. Periodically summarize old sessions into a short **user profile** (name, preferences) that's always in context.
 3. Use context caching for the static system prompt to cut latency and cost.
 4. Fetch and extract the top result page when snippets lack the needed number (weather, prices).
-5. Add a web UI with server-sent events streaming, using the same orchestrator.
+5. Show search progress and source previews inline in the web UI as results arrive.
 6. Use an LLM judge for open-ended accuracy evals instead of keyword checks.

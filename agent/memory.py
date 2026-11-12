@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,6 +75,16 @@ class MemoryStore:
         self._db = sqlite3.connect(str(path), check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)
+        # One connection shared by the web server's worker threads, so serialise access.
+        self._lock = threading.Lock()
+
+    def _fetchall(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._db.execute(sql, params).fetchall()
+
+    def _fetchone(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
+        with self._lock:
+            return self._db.execute(sql, params).fetchone()
 
     def close(self) -> None:
         self._db.close()
@@ -91,7 +102,7 @@ class MemoryStore:
     ) -> Message:
         created = _to_utc(created_at or datetime.now(timezone.utc))
         source_list = list(sources)
-        with self._db:
+        with self._lock, self._db:
             cursor = self._db.execute(
                 "INSERT INTO messages (session_id, role, content, created_at, sources) "
                 "VALUES (?, ?, ?, ?, ?)",
@@ -103,33 +114,37 @@ class MemoryStore:
 
     def recent(self, session_id: str, limit: int) -> list[Message]:
         """The last `limit` messages of a session, oldest first."""
-        rows = self._db.execute(
+        rows = self._fetchall(
             "SELECT * FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
             (session_id, limit),
-        ).fetchall()
+        )
         return [_row_to_message(r) for r in reversed(rows)]
+
+    def session_messages(self, session_id: str, limit: int = 500) -> list[Message]:
+        """A whole conversation, oldest first (used to reopen it in the web UI)."""
+        return self.recent(session_id, limit)
 
     def between(self, start: datetime, end: datetime, limit: int = 40) -> list[Message]:
         """Messages with start <= created_at < end, oldest first."""
-        rows = self._db.execute(
+        rows = self._fetchall(
             "SELECT * FROM messages WHERE created_at >= ? AND created_at < ? ORDER BY id LIMIT ?",
             (_iso(_to_utc(start)), _iso(_to_utc(end)), limit),
-        ).fetchall()
+        )
         return [_row_to_message(r) for r in rows]
 
     def first_user_messages(self, limit: int = 3) -> list[Message]:
-        rows = self._db.execute(
+        rows = self._fetchall(
             "SELECT * FROM messages WHERE role = 'user' ORDER BY id LIMIT ?", (limit,)
-        ).fetchall()
+        )
         return [_row_to_message(r) for r in rows]
 
     def latest_user_messages(self, limit: int, exclude_ids: Iterable[int] = ()) -> list[Message]:
         """Most recent user messages across all sessions, oldest first."""
         excluded = set(exclude_ids)
-        rows = self._db.execute(
+        rows = self._fetchall(
             "SELECT * FROM messages WHERE role = 'user' ORDER BY id DESC LIMIT ?",
             (limit + len(excluded),),
-        ).fetchall()
+        )
         kept = [_row_to_message(r) for r in rows if r["id"] not in excluded][:limit]
         return list(reversed(kept))
 
@@ -139,18 +154,18 @@ class MemoryStore:
         if not query:
             return []
         excluded = set(exclude_ids)
-        rows = self._db.execute(
+        rows = self._fetchall(
             "SELECT m.* FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid "
             "WHERE messages_fts MATCH ? ORDER BY bm25(messages_fts) LIMIT ?",
             (query, limit + len(excluded)),
-        ).fetchall()
+        )
         return [_row_to_message(r) for r in rows if r["id"] not in excluded][:limit]
 
     def stats(self) -> MemoryStats:
-        row = self._db.execute(
+        row = self._fetchone(
             "SELECT COUNT(*) AS n, COUNT(DISTINCT session_id) AS s, MIN(created_at) AS first "
             "FROM messages WHERE role = 'user'"
-        ).fetchone()
+        )
         first = datetime.fromisoformat(row["first"]) if row["first"] else None
         return MemoryStats(user_messages=row["n"], sessions=row["s"], first_at=first)
 

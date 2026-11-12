@@ -40,7 +40,13 @@ class Grounding:
     queries: tuple[str, ...]
 
 
-LLMEvent = TextChunk | Grounding
+@dataclass(frozen=True)
+class SearchStarted:
+    """Emitted just before searches run, so a UI can show what the agent is looking up."""
+    queries: tuple[str, ...]
+
+
+LLMEvent = TextChunk | SearchStarted | Grounding
 
 
 def _transient_network_errors() -> tuple[type[BaseException], ...]:
@@ -137,7 +143,11 @@ class GeminiLLM:
                 break
             # Send the model's own parts back unchanged: they carry the thought signatures Gemini needs.
             contents.append(types.Content(role="model", parts=model_parts))
-            contents.append(types.Content(role="user", parts=self._run_searches(calls, sources, queries)))
+            call_queries = [str((call.args or {}).get("query", "")).strip() for call in calls]
+            yield SearchStarted(tuple(q for q in call_queries if q))
+            contents.append(types.Content(
+                role="user", parts=self._run_searches(calls, call_queries, sources, queries)
+            ))
 
         if sources or queries:
             yield Grounding(tuple(sources), tuple(queries))
@@ -201,9 +211,8 @@ class GeminiLLM:
                     time.sleep(2 ** ((attempt + 1) // len(self._models) - 1))
         raise AssertionError("unreachable")
 
-    def _run_searches(self, calls, sources: list[Source], queries: list[str]) -> list:
+    def _run_searches(self, calls, call_queries: list[str], sources: list[Source], queries: list[str]) -> list:
         types = self._types
-        call_queries = [str((call.args or {}).get("query", "")).strip() for call in calls]
         with ThreadPoolExecutor(max_workers=max(1, len(calls))) as pool:
             outcomes = list(pool.map(self._safe_search, call_queries))
 

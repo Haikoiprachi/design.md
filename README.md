@@ -1,8 +1,12 @@
 # Gemini Chat Agent
 
-A terminal chat agent that **answers fast**, **gets things right** by grounding answers in web search with cited sources, and
-**remembers what you asked and when**, including across restarts.
+A chat agent (web UI + terminal) that **answers fast**, **gets things right** by grounding answers in web search with
+cited sources, and **remembers what you asked and when**, including across restarts.
 
+![Web UI with a sample conversation](docs/screenshot.png)
+
+- Web chat UI: streaming answers, live "Searching the web…" status, clickable citations, and a sidebar of every
+  question you've asked, grouped by day with times
 - Free to run: Gemini Flash (free tier) as the model, with automatic failover when a model is overloaded
 - One tool, `web_search`: Tavily (free key) or keyless public engines raced in parallel, with a cache
 - Streaming answers with `[n]` citations, plus sources and latency shown after every reply
@@ -18,10 +22,14 @@ python -m venv .venv
 pip install -r requirements.txt
 cp .env.example .env        # paste your free Gemini key (https://aistudio.google.com/apikey)
                             # optional: a free Tavily key (https://tavily.com) for better search
-python app.py
+python web.py               # web UI  -> open http://localhost:8000
+python app.py               # or the terminal version
 ```
 
-Example session (illustrative):
+Both share the same memory (`data/memory.db`). In the web UI, click any past question in the sidebar to reopen that
+conversation and continue it; `/?session=<id>` links straight to one.
+
+Terminal example (illustrative):
 
 ```
 you> who is the current CEO of Microsoft?
@@ -42,7 +50,7 @@ times, `/context` shows the exact system prompt from the last turn, and `/quit` 
 ## Tests and evals
 
 ```bash
-pytest                         # 54 offline tests: memory, time parsing, search, tool loop (no API key needed)
+pytest                         # 65 offline tests: memory, time parsing, search, tool loop, web API (no API key needed)
 python -m evals.run_evals      # live evals: latency, search routing, accuracy, memory recall -> evals/results.md
 ```
 
@@ -52,7 +60,7 @@ python -m evals.run_evals      # live evals: latency, search routing, accuracy, 
 |---|---|---|
 | `GEMINI_API_KEY` | (required) | Free key from Google AI Studio |
 | `GEMINI_MODEL` | `gemini-3.5-flash` | Any Gemini model with function calling |
-| `GEMINI_FALLBACK_MODELS` | `gemini-3.6-flash,gemini-3.5-flash-lite` | Tried in order when a model is overloaded |
+| `GEMINI_FALLBACK_MODELS` | `gemini-3.6-flash,gemini-3.1-flash-lite,gemini-3.5-flash-lite` | Tried in order when a model is overloaded or out of its daily free quota |
 | `TAVILY_API_KEY` | (optional) | Free key from tavily.com; without it, keyless public engines are used |
 | `TIMEZONE` | system timezone | IANA name, e.g. `Asia/Kolkata`; used for "yesterday" and similar |
 | `GEMINI_THINKING_BUDGET` | model default | Lower = faster, on models that support a thinking budget |
